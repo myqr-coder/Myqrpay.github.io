@@ -106,8 +106,15 @@ function loginFunc(){
   if(u!==FIX_USER||p!==FIX_PASS){alert("Invalid Username or Password");return;}
 
   const { totp } = otplib;
-  const valid = totp.check(o,SECRET);
-  if(!valid){alert("Invalid Google Authenticator Code");return;}
+
+  // Allow ±30 seconds tolerance (previous, current, next step)
+  const step = totp.options.step || 30;
+  const current = totp.generate(SECRET);
+  const previous = totp.generate(SECRET, { timestamp: Date.now() - step*1000 });
+  const next = totp.generate(SECRET, { timestamp: Date.now() + step*1000 });
+  if(o!==current && o!==previous && o!==next){
+    alert("Invalid Google Authenticator Code");return;
+  }
 
   document.getElementById("loginCard").style.display="none";
   document.getElementById("appCard").style.display="block";
