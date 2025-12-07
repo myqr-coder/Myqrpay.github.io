@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MyQR Full Advanced</title>
 
-<!-- Google Authenticator TOTP -->
-<script src="https://cdn.jsdelivr.net/npm/otplib@12.0.1/bundle/otplib-browser.min.js"></script>
 <!-- QR Generator -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
 <!-- jsPDF -->
@@ -18,7 +16,6 @@ body{margin:0;padding:0;font-family:Arial;background:#07101a;color:#e6f7fb;}
 .card{background:#0f1829;border-radius:12px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,0.6);margin-bottom:20px;}
 input, select{width:100%;padding:10px;margin:6px 0;border-radius:8px;border:none;background:#1c2538;color:#fff;font-size:15px;}
 button{padding:10px;border:none;border-radius:8px;background:#00eaff;color:#000;font-weight:bold;cursor:pointer;margin-top:10px;width:100%;}
-button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9fb7c1;}
 h2{text-align:center;margin:0 0 12px 0;}
 #qrCanvas{background:#fff;padding:10px;border-radius:10px;display:block;margin:auto;}
 .themes{display:flex;gap:8px;margin-top:10px;justify-content:center;}
@@ -37,6 +34,7 @@ h2{text-align:center;margin:0 0 12px 0;}
 <input id="password" type="password" placeholder="Enter Password">
 <input id="otp" placeholder="Google Authenticator Code">
 <button onclick="loginFunc()">Login</button>
+<p style="font-size:12px;color:#aaa;margin-top:6px;text-align:center;">Use TOTP app with secret: <b>JBSWY3DPEHPK3PXP</b></p>
 </div>
 
 <!-- APP -->
@@ -96,25 +94,49 @@ h2{text-align:center;margin:0 0 12px 0;}
 // ----- FIXED LOGIN -----
 const FIX_USER = "My.qr";
 const FIX_PASS = "123456";
-const SECRET = "JBSWY3DPEHPK3PXP"; // Google Authenticator TOTP
+const SECRET = "JBSWY3DPEHPK3PXP";
+
+// Simple TOTP validator (6-digit, 30s step)
+function generateTOTP(secret, time = Date.now()) {
+  function base32tohex(base32) {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bits = "";
+    let hex = "";
+    base32 = base32.replace(/=+$/,"");
+    for(let i=0;i<base32.length;i++){
+      let val=chars.indexOf(base32.charAt(i).toUpperCase());
+      bits += val.toString(2).padStart(5,'0');
+    }
+    for(let i=0;i+4<=bits.length;i+=4){
+      hex += parseInt(bits.substr(i,4),2).toString(16);
+    }
+    return hex;
+  }
+  function leftPad(str, len, pad){return pad.repeat(len-str.length)+str;}
+  const key = base32tohex(secret);
+  const epoch = Math.floor(time/1000/30);
+  const crypto = window.crypto || window.msCrypto;
+  if(!crypto) return "000000";
+  const hmac = new jsSHA("SHA-1","HEX");
+  hmac.setHMACKey(key,"HEX");
+  hmac.update(leftPad(epoch.toString(16),16,'0'));
+  let hash=hmac.getHMAC("HEX");
+  const offset=parseInt(hash.substr(hash.length-1),16)*2;
+  let otp=parseInt(hash.substr(offset,8),16)&0x7fffffff;
+  otp=(otp%1000000).toString();
+  return otp.padStart(6,'0');
+}
 
 function loginFunc(){
-  const u = document.getElementById("username").value.trim();
-  const p = document.getElementById("password").value.trim();
-  const o = document.getElementById("otp").value.trim();
-
+  const u=document.getElementById("username").value.trim();
+  const p=document.getElementById("password").value.trim();
+  const o=document.getElementById("otp").value.trim();
   if(u!==FIX_USER||p!==FIX_PASS){alert("Invalid Username or Password");return;}
 
-  const { totp } = otplib;
-
-  // Allow ±30 seconds tolerance (previous, current, next step)
-  const step = totp.options.step || 30;
-  const current = totp.generate(SECRET);
-  const previous = totp.generate(SECRET, { timestamp: Date.now() - step*1000 });
-  const next = totp.generate(SECRET, { timestamp: Date.now() + step*1000 });
-  if(o!==current && o!==previous && o!==next){
-    alert("Invalid Google Authenticator Code");return;
-  }
+  const current=generateTOTP(SECRET, Date.now());
+  const prev=generateTOTP(SECRET, Date.now()-30000);
+  const next=generateTOTP(SECRET, Date.now()+30000);
+  if(o!==current && o!==prev && o!==next){alert("Invalid Google Authenticator Code");return;}
 
   document.getElementById("loginCard").style.display="none";
   document.getElementById("appCard").style.display="block";
@@ -151,11 +173,8 @@ function setTheme(name){
 
 // ----- Copy/Share/Download -----
 function copyLink(){navigator.clipboard.writeText(document.getElementById('upiLink').textContent).then(()=>alert('Copied'));}
-
 function shareLink(){const uri=document.getElementById('upiLink').textContent; if(navigator.share){navigator.share({title:'Pay via UPI',text:uri}).catch(()=>{});}else{navigator.clipboard.writeText(uri).then(()=>alert('Copied to clipboard'));}}
-
 function downloadQR(){const a=document.createElement('a');a.href=document.getElementById('qrCanvas').toDataURL('image/png');a.download=`upi_qr_${Date.now()}.png`;a.click();}
-
 function downloadPDF(){
   const { jsPDF }=window.jspdf;
   const doc=new jsPDF();
@@ -204,5 +223,8 @@ function loadLast(){
   try{const o=JSON.parse(s);document.getElementById('upi').value=o.upi||'';document.getElementById('amount').value=o.amt||'';document.getElementById('name').value=o.name||'';if(o.note){const sel=document.getElementById('reason');let found=false;for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===o.note){sel.selectedIndex=i;found=true;break;}}if(!found){sel.value='Other';document.getElementById('customReason').value=o.note;}}}catch(e){}
 }
 </script>
+
+<!-- jsSHA for TOTP -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsSHA/3.2.0/sha.js"></script>
 </body>
 </html>
