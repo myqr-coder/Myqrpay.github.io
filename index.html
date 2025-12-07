@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyQR Full Advanced</title>
+
+<!-- Google Authenticator TOTP -->
+<script src="https://cdn.jsdelivr.net/npm/otplib@12.0.1/bundle/otplib-browser.min.js"></script>
+<!-- QR Generator -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+body{margin:0;padding:0;font-family:Arial;background:#07101a;color:#e6f7fb;}
+.container{max-width:900px;margin:40px auto;padding:20px;}
+.card{background:#0f1829;border-radius:12px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,0.6);margin-bottom:20px;}
+input, select{width:100%;padding:10px;margin:6px 0;border-radius:8px;border:none;background:#1c2538;color:#fff;font-size:15px;}
+button{padding:10px;border:none;border-radius:8px;background:#00eaff;color:#000;font-weight:bold;cursor:pointer;margin-top:10px;width:100%;}
+button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.2);color:#9fb7c1;}
+h2{text-align:center;margin:0 0 12px 0;}
+#qrCanvas{background:#fff;padding:10px;border-radius:10px;display:block;margin:auto;}
+.themes{display:flex;gap:8px;margin-top:10px;justify-content:center;}
+.themeBtn{width:40px;height:28px;border-radius:6px;cursor:pointer;border:2px solid rgba(255,255,255,0.1);}
+#logoPreview img,#screenshotPreview img{border-radius:8px;max-width:100%;}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<!-- LOGIN -->
+<div class="card" id="loginCard">
+<h2>Login</h2>
+<input id="username" placeholder="Enter Username">
+<input id="password" type="password" placeholder="Enter Password">
+<input id="otp" placeholder="Google Authenticator Code">
+<button onclick="loginFunc()">Login</button>
+</div>
+
+<!-- APP -->
+<div class="card" id="appCard" style="display:none;">
+<h2>UPI QR Generator</h2>
+
+<input id="upi" placeholder="Enter UPI ID (example@upi)">
+<input id="amount" placeholder="Enter Amount (₹)">
+<input id="name" placeholder="Receiver Name (Optional)">
+<select id="reason">
+  <option value="Payment for goods">Payment for goods</option>
+  <option value="Service fee">Service fee</option>
+  <option value="Pending bill">Pending bill</option>
+  <option value="Loan repayment">Loan repayment</option>
+  <option value="Other">Other...</option>
+</select>
+<input id="customReason" placeholder="Custom reason (if Other)">
+
+<div class="themes">
+<div class="themeBtn" style="background:linear-gradient(135deg,#00eaff,#00ffa6)" onclick="setTheme('neon')"></div>
+<div class="themeBtn" style="background:linear-gradient(135deg,#4ef07a,#16b27a)" onclick="setTheme('green')"></div>
+<div class="themeBtn" style="background:linear-gradient(135deg,#ffc857,#ff8a00)" onclick="setTheme('gold')"></div>
+<div class="themeBtn" style="background:linear-gradient(135deg,#b980ff,#7a5cff)" onclick="setTheme('purple')"></div>
+</div>
+
+<button onclick="generateQR()">Generate QR 🔥</button>
+<canvas id="qrCanvas" width="260" height="260"></canvas>
+<p id="upiLink" style="text-align:center;word-break:break-all;"></p>
+
+<button onclick="copyLink()">Copy UPI Link</button>
+<button onclick="shareLink()">Share</button>
+<button onclick="downloadQR()">Download PNG</button>
+<button onclick="downloadPDF()">Download PDF Receipt</button>
+
+<label>Upload Logo (Preview Only)</label>
+<input type="file" id="logoFile" accept="image/*">
+<div id="logoPreview"></div>
+
+<label>Upload Screenshot (Local Preview)</label>
+<input type="file" id="screenshotFile" accept="image/*">
+<div id="screenshotPreview"></div>
+
+<label>QR Expiry (minutes)</label>
+<select id="expireTime">
+<option value="15">15</option>
+<option value="30">30</option>
+<option value="60">60</option>
+</select>
+<button onclick="startTimerFromSelect()">Start Timer</button>
+<button onclick="stopTimer()">Stop Timer</button>
+<p id="timerDisplay">QR not active</p>
+
+</div>
+</div>
+
+<script>
+// ----- FIXED LOGIN -----
+const FIX_USER = "My.qr";
+const FIX_PASS = "123456";
+const SECRET = "JBSWY3DPEHPK3PXP"; // Google Authenticator TOTP
+
+function loginFunc(){
+  const u = document.getElementById("username").value.trim();
+  const p = document.getElementById("password").value.trim();
+  const o = document.getElementById("otp").value.trim();
+
+  if(u!==FIX_USER||p!==FIX_PASS){alert("Invalid Username or Password");return;}
+
+  const { totp } = otplib;
+  const valid = totp.check(o,SECRET);
+  if(!valid){alert("Invalid Google Authenticator Code");return;}
+
+  document.getElementById("loginCard").style.display="none";
+  document.getElementById("appCard").style.display="block";
+  loadLast();
+}
+
+// ----- QR Generation -----
+let qrious = new QRious({element:document.getElementById('qrCanvas'),size:260,value:'',level:'H'});
+function buildUPI(){ 
+  const pa=document.getElementById('upi').value.trim();
+  const am=document.getElementById('amount').value.trim();
+  const pn=document.getElementById('name').value.trim();
+  const reasonSel=document.getElementById('reason').value;
+  const reasonCustom=document.getElementById('customReason').value.trim();
+  const note=(reasonSel==='Other'?reasonCustom:reasonSel);
+  if(!pa||!am){alert("Enter UPI & Amount");return null;}
+  return `upi://pay?pa=${encodeURIComponent(pa)}&pn=${encodeURIComponent(pn)}&tn=${encodeURIComponent(note)}&am=${encodeURIComponent(Number(am).toFixed(2))}&cu=INR`;
+}
+
+function generateQR(){
+  const uri=buildUPI();
+  if(!uri)return;
+  qrious.value=uri;
+  document.getElementById('upiLink').textContent=uri;
+  saveLast();
+  startTimerFromSelect();
+}
+
+// ----- Theme -----
+function setTheme(name){
+  document.body.className='';
+  document.body.classList.add('theme-'+name);
+}
+
+// ----- Copy/Share/Download -----
+function copyLink(){navigator.clipboard.writeText(document.getElementById('upiLink').textContent).then(()=>alert('Copied'));}
+
+function shareLink(){const uri=document.getElementById('upiLink').textContent; if(navigator.share){navigator.share({title:'Pay via UPI',text:uri}).catch(()=>{});}else{navigator.clipboard.writeText(uri).then(()=>alert('Copied to clipboard'));}}
+
+function downloadQR(){const a=document.createElement('a');a.href=document.getElementById('qrCanvas').toDataURL('image/png');a.download=`upi_qr_${Date.now()}.png`;a.click();}
+
+function downloadPDF(){
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF();
+  const upi=document.getElementById('upi').value||'—';
+  const amt=document.getElementById('amount').value||'0.00';
+  const name=document.getElementById('name').value||'—';
+  const reason=(document.getElementById('reason').value==='Other'?document.getElementById('customReason').value:document.getElementById('reason').value)||'—';
+  doc.setFontSize(14);doc.text('MyQR Receipt',14,20);
+  doc.setFontSize(11);
+  doc.text(`Payee: ${name}`,14,36);
+  doc.text(`UPI: ${upi}`,14,44);
+  doc.text(`Amount: ₹${amt}`,14,52);
+  doc.text(`Note: ${reason}`,14,60);
+  doc.text(`Date: ${new Date().toLocaleString()}`,14,68);
+  doc.save(`receipt_${Date.now()}.pdf`);
+}
+
+// ----- Logo / Screenshot Preview -----
+document.getElementById('logoFile').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const reader=new FileReader();
+  reader.onload=()=>document.getElementById('logoPreview').innerHTML=`<img src="${reader.result}" style="height:60px;">`;
+  reader.readAsDataURL(f);
+});
+document.getElementById('screenshotFile').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const reader=new FileReader();
+  reader.onload=()=>document.getElementById('screenshotPreview').innerHTML=`<img src="${reader.result}">`;
+  reader.readAsDataURL(f);
+});
+
+// ----- Timer -----
+let timerId=null,expiresAt=null;
+function startTimer(minutes){stopTimer();minutes=Number(minutes)||15;expiresAt=Date.now()+minutes*60*1000;updateTimer();timerId=setInterval(updateTimer,1000);}
+function startTimerFromSelect(){startTimer(document.getElementById('expireTime').value);}
+function stopTimer(){if(timerId)clearInterval(timerId);timerId=null;expiresAt=null;document.getElementById('timerDisplay').textContent='QR not active';}
+function updateTimer(){if(!expiresAt)return;const diff=expiresAt-Date.now();if(diff<=0){stopTimer();qrious.value='';document.getElementById('upiLink').textContent='QR expired';alert('QR expired');return;}const s=Math.floor(diff/1000);const m=Math.floor(s/60);const sec=s%60;document.getElementById('timerDisplay').textContent=`Expires in ${m}:${sec.toString().padStart(2,'0')}`;}
+
+// ----- LocalStorage Last Input -----
+function saveLast(){
+  const obj={upi:document.getElementById('upi').value,amt:document.getElementById('amount').value,name:document.getElementById('name').value,note:(document.getElementById('reason').value==='Other'?document.getElementById('customReason').value:document.getElementById('reason').value),ts:Date.now()};
+  localStorage.setItem('myqr_last',JSON.stringify(obj));
+}
+function loadLast(){
+  const s=localStorage.getItem('myqr_last');if(!s)return;
+  try{const o=JSON.parse(s);document.getElementById('upi').value=o.upi||'';document.getElementById('amount').value=o.amt||'';document.getElementById('name').value=o.name||'';if(o.note){const sel=document.getElementById('reason');let found=false;for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===o.note){sel.selectedIndex=i;found=true;break;}}if(!found){sel.value='Other';document.getElementById('customReason').value=o.note;}}}catch(e){}
+}
+</script>
+</body>
+</html>
